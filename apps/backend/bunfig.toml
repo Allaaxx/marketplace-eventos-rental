@@ -1,0 +1,5 @@
+[install]
+frozenLockfile = false
+
+[install.cache]
+dir = "../../.bun/cache"

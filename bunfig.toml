@@ -1,0 +1,12 @@
+[install]
+# Configurações de instalação do Bun
+frozenLockfile = false
+production = false
+
+[install.cache]
+# Cache de dependências
+dir = ".bun/cache"
+
+[install.scopes]
+# Usar registry padrão do npm
+"@*" = "https://registry.npmjs.org/"
