@@ -1,6 +1,6 @@
-import { Product, ProductType } from '@domain/entities/Product';
 import { IProductRepository } from '@domain/repositories/IProductRepository';
 import { IShopRepository } from '@domain/repositories/IShopRepository';
+import { ProductEntity, ProductType } from '@domain/entities/Product';
 
 export interface CreateProductInput {
   shopId: string;
@@ -11,7 +11,7 @@ export interface CreateProductInput {
   price: number;
   dailyRate?: number;
   images?: string[];
-  quantity: number;
+  quantity?: number;
   minRentalDays?: number;
   maxRentalDays?: number;
   category?: string;
@@ -30,31 +30,25 @@ export class CreateProductUseCase {
     private readonly shopRepository: IShopRepository
   ) {}
 
-  async execute(input: CreateProductInput): Promise<Product> {
+  async execute(input: CreateProductInput): Promise<ProductEntity> {
     const shop = await this.shopRepository.findById(input.shopId);
-
     if (!shop) {
       throw new Error('Shop not found');
     }
 
     if (shop.ownerId !== input.vendorId) {
-      throw new Error('You are not authorized to create products for this shop');
+      throw new Error('Only shop owner can create products');
     }
 
-    if (!shop.isActive) {
-      throw new Error('Shop is not active');
-    }
-
-    // Validate rental product
     if (input.type === 'rental' && !input.dailyRate) {
       throw new Error('Daily rate is required for rental products');
     }
 
-    // Generate slug
-    const slug = input.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
+    if (input.type === 'bundle' && (!input.components || input.components.length === 0)) {
+      throw new Error('Bundles must have at least one component');
+    }
+
+    const slug = this.generateSlug(input.name);
 
     const product = await this.productRepository.create({
       shopId: input.shopId,
@@ -65,7 +59,7 @@ export class CreateProductUseCase {
       price: input.price.toFixed(2),
       dailyRate: input.dailyRate?.toFixed(2),
       images: input.images || [],
-      quantity: input.quantity,
+      quantity: input.quantity || 1,
       minRentalDays: input.minRentalDays || 1,
       maxRentalDays: input.maxRentalDays,
       category: input.category,
@@ -73,6 +67,15 @@ export class CreateProductUseCase {
       isActive: true,
     });
 
-    return product;
+    return new ProductEntity(product);
+  }
+
+  private generateSlug(name: string): string {
+    return name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
   }
 }

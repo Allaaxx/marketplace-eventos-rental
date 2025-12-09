@@ -1,6 +1,6 @@
-import { Booking } from '@domain/entities/Booking';
 import { IBookingRepository } from '@domain/repositories/IBookingRepository';
 import { IShopRepository } from '@domain/repositories/IShopRepository';
+import { BookingEntity } from '@domain/entities/Booking';
 import { StripeService } from '@application/services/StripeService';
 
 export interface ApproveBookingInput {
@@ -15,29 +15,29 @@ export class ApproveBookingUseCase {
     private readonly stripeService: StripeService
   ) {}
 
-  async execute(input: ApproveBookingInput): Promise<{ booking: Booking; checkoutUrl: string }> {
+  async execute(input: ApproveBookingInput): Promise<{ booking: BookingEntity; checkoutUrl: string }> {
     const booking = await this.bookingRepository.findById(input.bookingId);
-
     if (!booking) {
       throw new Error('Booking not found');
     }
 
-    const shop = await this.shopRepository.findById(booking.shopId);
+    const bookingEntity = new BookingEntity(booking);
 
+    if (!bookingEntity.canBeApproved()) {
+      throw new Error('Booking cannot be approved in current status');
+    }
+
+    const shop = await this.shopRepository.findById(booking.shopId);
     if (!shop) {
       throw new Error('Shop not found');
     }
 
     if (shop.ownerId !== input.vendorId) {
-      throw new Error('You are not authorized to approve this booking');
+      throw new Error('Only shop owner can approve bookings');
     }
 
-    if (booking.status !== 'PENDING_VENDOR_REVIEW') {
-      throw new Error('Booking cannot be approved in its current state');
-    }
-
-    if (!shop.stripeOnboardingComplete || !shop.stripeAccountId) {
-      throw new Error('Shop has not completed Stripe onboarding');
+    if (!shop.stripeOnboardingComplete) {
+      throw new Error('Shop must complete Stripe onboarding first');
     }
 
     // Calculate platform fee (10%)
@@ -45,16 +45,15 @@ export class ApproveBookingUseCase {
     const platformFee = totalAmount * 0.1;
     const vendorAmount = totalAmount - platformFee;
 
-    // Create Stripe Checkout Session
+    // Create Stripe checkout session
     const checkoutSession = await this.stripeService.createCheckoutSession({
       bookingId: booking.id,
-      customerId: booking.customerId,
       amount: totalAmount,
       platformFee,
-      connectedAccountId: shop.stripeAccountId,
+      stripeAccountId: shop.stripeAccountId!,
     });
 
-    // Update booking
+    // Update booking status
     const updatedBooking = await this.bookingRepository.update(booking.id, {
       status: 'APPROVED_AWAITING_PAYMENT',
       platformFee: platformFee.toFixed(2),
@@ -63,8 +62,8 @@ export class ApproveBookingUseCase {
     });
 
     return {
-      booking: updatedBooking,
-      checkoutUrl: checkoutSession.url,
+      booking: new BookingEntity(updatedBooking),
+      checkoutUrl: checkoutSession.url!,
     };
   }
 }

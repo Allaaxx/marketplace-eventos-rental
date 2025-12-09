@@ -1,65 +1,36 @@
-import { Booking, BookingItem } from '@domain/entities/Booking';
 import { IBookingRepository } from '@domain/repositories/IBookingRepository';
 import { IProductRepository } from '@domain/repositories/IProductRepository';
-import { InventoryService } from '@application/services/InventoryService';
-import { nanoid } from 'nanoid';
+import { BookingEntity } from '@domain/entities/Booking';
+import { DateRange } from '@domain/value-objects/DateRange';
+import { AvailabilityService } from '@application/services/AvailabilityService';
 
 export interface CreateBookingInput {
   customerId: string;
   shopId: string;
-  startDate: Date;
-  endDate: Date;
   items: {
     productId: string;
     quantity: number;
   }[];
-  notes?: string;
+  startDate: Date;
+  endDate: Date;
   deliveryAddress?: string;
+  notes?: string;
 }
 
 export class CreateBookingUseCase {
   constructor(
     private readonly bookingRepository: IBookingRepository,
     private readonly productRepository: IProductRepository,
-    private readonly inventoryService: InventoryService
+    private readonly availabilityService: AvailabilityService
   ) {}
 
-  async execute(input: CreateBookingInput): Promise<Booking> {
-    // Validate dates
-    if (input.startDate >= input.endDate) {
-      throw new Error('Start date must be before end date');
-    }
+  async execute(input: CreateBookingInput): Promise<BookingEntity> {
+    const dateRange = new DateRange(input.startDate, input.endDate);
+    const days = dateRange.getDurationInDays();
 
-    if (input.startDate < new Date()) {
-      throw new Error('Start date cannot be in the past');
-    }
-
-    // Calculate duration
-    const duration = Math.ceil(
-      (input.endDate.getTime() - input.startDate.getTime()) / (1000 * 60 * 60 * 24)
-    );
-
-    // Fetch products and validate availability
-    const items: Omit<BookingItem, 'id' | 'bookingId' | 'createdAt'>[] = [];
-    let totalAmount = 0;
-
+    // Validate availability for all products
     for (const item of input.items) {
-      const product = await this.productRepository.findById(item.productId);
-
-      if (!product) {
-        throw new Error(`Product ${item.productId} not found`);
-      }
-
-      if (!product.isActive) {
-        throw new Error(`Product ${product.name} is not available`);
-      }
-
-      if (product.shopId !== input.shopId) {
-        throw new Error(`Product ${product.name} does not belong to this shop`);
-      }
-
-      // Check availability
-      const isAvailable = await this.inventoryService.checkAvailability(
+      const isAvailable = await this.availabilityService.checkAvailability(
         item.productId,
         input.startDate,
         input.endDate,
@@ -67,25 +38,38 @@ export class CreateBookingUseCase {
       );
 
       if (!isAvailable) {
-        throw new Error(`Product ${product.name} is not available for the selected dates`);
+        throw new Error(`Product ${item.productId} is not available for the selected dates`);
+      }
+    }
+
+    // Calculate total amount
+    let totalAmount = 0;
+    const bookingItems = [];
+
+    for (const item of input.items) {
+      const product = await this.productRepository.findById(item.productId);
+      if (!product) {
+        throw new Error(`Product ${item.productId} not found`);
       }
 
-      // Calculate price
+      if (product.shopId !== input.shopId) {
+        throw new Error('All products must belong to the same shop');
+      }
+
       const unitPrice = product.type === 'rental' && product.dailyRate
-        ? parseFloat(product.dailyRate) * duration
+        ? parseFloat(product.dailyRate) * days
         : parseFloat(product.price);
 
-      const itemTotal = unitPrice * item.quantity;
+      const totalPrice = unitPrice * item.quantity;
+      totalAmount += totalPrice;
 
-      items.push({
+      bookingItems.push({
         productId: item.productId,
         quantity: item.quantity,
         unitPrice: unitPrice.toFixed(2),
-        totalPrice: itemTotal.toFixed(2),
-        days: duration,
+        totalPrice: totalPrice.toFixed(2),
+        days: product.type === 'rental' ? days : 1,
       });
-
-      totalAmount += itemTotal;
     }
 
     // Create booking
@@ -96,10 +80,11 @@ export class CreateBookingUseCase {
       startDate: input.startDate,
       endDate: input.endDate,
       totalAmount: totalAmount.toFixed(2),
-      notes: input.notes,
       deliveryAddress: input.deliveryAddress,
+      notes: input.notes,
+      items: bookingItems,
     });
 
-    return booking;
+    return new BookingEntity(booking);
   }
 }

@@ -1,6 +1,6 @@
-import { Shop } from '@domain/entities/Shop';
 import { IShopRepository } from '@domain/repositories/IShopRepository';
 import { IUserRepository } from '@domain/repositories/IUserRepository';
+import { ShopEntity } from '@domain/entities/Shop';
 
 export interface CreateShopInput {
   ownerId: string;
@@ -19,9 +19,8 @@ export class CreateShopUseCase {
     private readonly userRepository: IUserRepository
   ) {}
 
-  async execute(input: CreateShopInput): Promise<Shop> {
+  async execute(input: CreateShopInput): Promise<ShopEntity> {
     const user = await this.userRepository.findById(input.ownerId);
-
     if (!user) {
       throw new Error('User not found');
     }
@@ -30,16 +29,15 @@ export class CreateShopUseCase {
       throw new Error('Only vendors can create shops');
     }
 
-    // Generate slug
-    const slug = input.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
+    const existingShops = await this.shopRepository.findByOwnerId(input.ownerId);
+    if (existingShops.length > 0) {
+      throw new Error('User already has a shop');
+    }
 
-    // Check if slug exists
+    const slug = this.generateSlug(input.name);
     const existingShop = await this.shopRepository.findBySlug(slug);
     if (existingShop) {
-      throw new Error('Shop with this name already exists');
+      throw new Error('Shop name already taken');
     }
 
     const shop = await this.shopRepository.create({
@@ -56,6 +54,15 @@ export class CreateShopUseCase {
       isActive: true,
     });
 
-    return shop;
+    return new ShopEntity(shop);
+  }
+
+  private generateSlug(name: string): string {
+    return name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
   }
 }
