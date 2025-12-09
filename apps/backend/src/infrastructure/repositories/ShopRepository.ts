@@ -1,74 +1,67 @@
+import { eq, and } from 'drizzle-orm';
 import { db, shops } from '@infrastructure/database';
-import { IShopRepository } from '@domain/repositories/IShopRepository';
 import { Shop } from '@domain/entities/Shop';
-import { eq, and, desc } from 'drizzle-orm';
+import { IShopRepository } from '@domain/repositories/IShopRepository';
 
 export class ShopRepository implements IShopRepository {
   async findById(id: string): Promise<Shop | null> {
-    const result = await db.query.shops.findFirst({
-      where: eq(shops.id, id),
-    });
-    return result || null;
+    const result = await db.select().from(shops).where(eq(shops.id, id)).limit(1);
+    return result[0] || null;
   }
 
   async findBySlug(slug: string): Promise<Shop | null> {
-    const result = await db.query.shops.findFirst({
-      where: eq(shops.slug, slug),
-    });
-    return result || null;
+    const result = await db.select().from(shops).where(eq(shops.slug, slug)).limit(1);
+    return result[0] || null;
   }
 
   async findByOwnerId(ownerId: string): Promise<Shop[]> {
-    return await db.query.shops.findMany({
-      where: eq(shops.ownerId, ownerId),
-    });
+    return await db.select().from(shops).where(eq(shops.ownerId, ownerId));
   }
 
-  async create(data: Omit<Shop, 'id' | 'createdAt' | 'updatedAt'>): Promise<Shop> {
-    const [shop] = await db
+  async create(shopData: Omit<Shop, 'id' | 'createdAt' | 'updatedAt'>): Promise<Shop> {
+    const result = await db
       .insert(shops)
       .values({
-        ...data,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        ...shopData,
+        stripeOnboardingComplete: shopData.stripeOnboardingComplete || false,
+        isActive: shopData.isActive ?? true,
       })
       .returning();
-    return shop;
+    return result[0];
   }
 
   async update(id: string, data: Partial<Shop>): Promise<Shop> {
-    const [shop] = await db
+    const result = await db
       .update(shops)
-      .set({
-        ...data,
-        updatedAt: new Date(),
-      })
+      .set({ ...data, updatedAt: new Date() })
       .where(eq(shops.id, id))
       .returning();
-    return shop;
+    
+    if (!result[0]) {
+      throw new Error('Shop not found');
+    }
+    
+    return result[0];
   }
 
   async delete(id: string): Promise<void> {
     await db.delete(shops).where(eq(shops.id, id));
   }
 
-  async list(filters?: {
-    isActive?: boolean;
-    limit?: number;
-    offset?: number;
-  }): Promise<Shop[]> {
-    const conditions = [];
+  async list(filters?: { isActive?: boolean; limit?: number; offset?: number }): Promise<Shop[]> {
+    let query = db.select().from(shops);
 
     if (filters?.isActive !== undefined) {
-      conditions.push(eq(shops.isActive, filters.isActive));
+      query = query.where(eq(shops.isActive, filters.isActive)) as any;
     }
 
-    const query = db.query.shops.findMany({
-      where: conditions.length > 0 ? and(...conditions) : undefined,
-      limit: filters?.limit || 50,
-      offset: filters?.offset || 0,
-      orderBy: desc(shops.createdAt),
-    });
+    if (filters?.limit) {
+      query = query.limit(filters.limit) as any;
+    }
+
+    if (filters?.offset) {
+      query = query.offset(filters.offset) as any;
+    }
 
     return await query;
   }

@@ -1,45 +1,42 @@
-import { db, users } from '@infrastructure/database';
-import { IUserRepository } from '@domain/repositories/IUserRepository';
-import { User } from '@domain/entities/User';
 import { eq } from 'drizzle-orm';
+import { db, users } from '@infrastructure/database';
+import { User } from '@domain/entities/User';
+import { IUserRepository } from '@domain/repositories/IUserRepository';
 
 export class UserRepository implements IUserRepository {
   async findById(id: string): Promise<User | null> {
-    const result = await db.query.users.findFirst({
-      where: eq(users.id, id),
-    });
-    return result || null;
+    const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+    return result[0] || null;
   }
 
   async findByEmail(email: string): Promise<User | null> {
-    const result = await db.query.users.findFirst({
-      where: eq(users.email, email),
-    });
-    return result || null;
+    const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    return result[0] || null;
   }
 
-  async create(data: Omit<User, 'id' | 'createdAt' | 'updatedAt'>): Promise<User> {
-    const [user] = await db
+  async create(userData: Omit<User, 'id' | 'createdAt' | 'updatedAt'>): Promise<User> {
+    const result = await db
       .insert(users)
       .values({
-        ...data,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        ...userData,
+        emailVerified: userData.emailVerified || false,
       })
       .returning();
-    return user;
+    return result[0];
   }
 
   async update(id: string, data: Partial<User>): Promise<User> {
-    const [user] = await db
+    const result = await db
       .update(users)
-      .set({
-        ...data,
-        updatedAt: new Date(),
-      })
+      .set({ ...data, updatedAt: new Date() })
       .where(eq(users.id, id))
       .returning();
-    return user;
+    
+    if (!result[0]) {
+      throw new Error('User not found');
+    }
+    
+    return result[0];
   }
 
   async delete(id: string): Promise<void> {
