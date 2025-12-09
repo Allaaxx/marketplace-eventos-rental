@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: marketplace-postgres
+    environment:
+      POSTGRES_USER: marketplace
+      POSTGRES_PASSWORD: marketplace_dev_2025
+      POSTGRES_DB: marketplace_eventos
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - marketplace-network
+
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    container_name: marketplace-backend
+    environment:
+      DATABASE_URL: postgresql://marketplace:marketplace_dev_2025@postgres:5432/marketplace_eventos
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: http://localhost:3001
+    ports:
+      - "3001:3001"
+    depends_on:
+      - postgres
+    networks:
+      - marketplace-network
+    volumes:
+      - ./apps/backend:/app
+      - /app/node_modules
+
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile
+    container_name: marketplace-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - marketplace-network
+    volumes:
+      - ./apps/frontend:/app
+      - /app/node_modules
+      - /app/.next
+
+volumes:
+  postgres_data:
+
+networks:
+  marketplace-network:
+    driver: bridge
