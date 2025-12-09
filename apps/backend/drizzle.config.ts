@@ -1,10 +1,12 @@
-import type { Config } from 'drizzle-kit';
+import { defineConfig } from 'drizzle-kit';
 
-export default {
+export default defineConfig({
   schema: './src/infrastructure/database/schema.ts',
   out: './drizzle',
-  driver: 'pg',
+  dialect: 'postgresql',
   dbCredentials: {
-    connectionString: process.env.DATABASE_URL || '',
+    url: process.env.DATABASE_URL || 'postgresql://marketplace:marketplace_dev_2025@localhost:5432/marketplace_eventos',
   },
-} satisfies Config;
+  verbose: true,
+  strict: true,
+});
