@@ -1,23 +1,21 @@
+import { db, users } from '@infrastructure/database';
 import { IUserRepository } from '@domain/repositories/IUserRepository';
 import { User } from '@domain/entities/User';
-import { db, users } from '@infrastructure/database';
 import { eq } from 'drizzle-orm';
 
 export class UserRepository implements IUserRepository {
   async findById(id: string): Promise<User | null> {
-    const user = await db.query.users.findFirst({
+    const result = await db.query.users.findFirst({
       where: eq(users.id, id),
     });
-
-    return user || null;
+    return result || null;
   }
 
   async findByEmail(email: string): Promise<User | null> {
-    const user = await db.query.users.findFirst({
+    const result = await db.query.users.findFirst({
       where: eq(users.email, email),
     });
-
-    return user || null;
+    return result || null;
   }
 
   async create(data: Omit<User, 'id' | 'createdAt' | 'updatedAt'>): Promise<User> {
@@ -25,10 +23,10 @@ export class UserRepository implements IUserRepository {
       .insert(users)
       .values({
         ...data,
-        emailVerified: data.emailVerified || false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       })
       .returning();
-
     return user;
   }
 
@@ -41,11 +39,6 @@ export class UserRepository implements IUserRepository {
       })
       .where(eq(users.id, id))
       .returning();
-
-    if (!user) {
-      throw new Error('User not found');
-    }
-
     return user;
   }
 

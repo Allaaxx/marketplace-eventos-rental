@@ -1,40 +1,36 @@
+import { db, products, productComponents } from '@infrastructure/database';
 import { IProductRepository } from '@domain/repositories/IProductRepository';
 import { Product } from '@domain/entities/Product';
-import { db, products } from '@infrastructure/database';
-import { eq, and, like, or } from 'drizzle-orm';
+import { eq, and, like, desc, or } from 'drizzle-orm';
 
 export class ProductRepository implements IProductRepository {
   async findById(id: string): Promise<Product | null> {
-    const product = await db.query.products.findFirst({
+    const result = await db.query.products.findFirst({
       where: eq(products.id, id),
       with: {
         components: true,
       },
     });
-
-    return product || null;
+    return result || null;
   }
 
   async findByShopId(shopId: string): Promise<Product[]> {
-    const productList = await db.query.products.findMany({
+    return await db.query.products.findMany({
       where: eq(products.shopId, shopId),
       with: {
         components: true,
       },
     });
-
-    return productList;
   }
 
   async findBySlug(shopId: string, slug: string): Promise<Product | null> {
-    const product = await db.query.products.findFirst({
+    const result = await db.query.products.findFirst({
       where: and(eq(products.shopId, shopId), eq(products.slug, slug)),
       with: {
         components: true,
       },
     });
-
-    return product || null;
+    return result || null;
   }
 
   async create(data: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Promise<Product> {
@@ -42,13 +38,26 @@ export class ProductRepository implements IProductRepository {
       .insert(products)
       .values({
         ...data,
-        isActive: data.isActive ?? true,
-        images: data.images || [],
-        tags: data.tags || [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
       })
       .returning();
 
-    return product;
+    // Create components if it's a bundle
+    if (data.components && data.components.length > 0) {
+      const componentsData = data.components.map((comp: any) => ({
+        bundleId: product.id,
+        name: comp.name,
+        description: comp.description,
+        quantity: comp.quantity,
+        isShared: comp.isShared,
+        createdAt: new Date(),
+      }));
+
+      await db.insert(productComponents).values(componentsData);
+    }
+
+    return await this.findById(product.id) as Product;
   }
 
   async update(id: string, data: Partial<Product>): Promise<Product> {
@@ -60,15 +69,11 @@ export class ProductRepository implements IProductRepository {
       })
       .where(eq(products.id, id))
       .returning();
-
-    if (!product) {
-      throw new Error('Product not found');
-    }
-
-    return product;
+    return await this.findById(product.id) as Product;
   }
 
   async delete(id: string): Promise<void> {
+    await db.delete(productComponents).where(eq(productComponents.bundleId, id));
     await db.delete(products).where(eq(products.id, id));
   }
 
@@ -95,30 +100,28 @@ export class ProductRepository implements IProductRepository {
       conditions.push(eq(products.shopId, filters.shopId));
     }
 
-    const productList = await db.query.products.findMany({
+    return await db.query.products.findMany({
       where: conditions.length > 0 ? and(...conditions) : undefined,
+      limit: filters?.limit || 50,
+      offset: filters?.offset || 0,
+      orderBy: desc(products.createdAt),
       with: {
         components: true,
       },
-      limit: filters?.limit || 20,
-      offset: filters?.offset || 0,
     });
-
-    return productList;
   }
 
   async search(query: string): Promise<Product[]> {
-    const productList = await db.query.products.findMany({
+    return await db.query.products.findMany({
       where: or(
         like(products.name, `%${query}%`),
-        like(products.description, `%${query}%`)
+        like(products.description, `%${query}%`),
+        like(products.category, `%${query}%`)
       ),
+      limit: 20,
       with: {
         components: true,
       },
-      limit: 20,
     });
-
-    return productList;
   }
 }

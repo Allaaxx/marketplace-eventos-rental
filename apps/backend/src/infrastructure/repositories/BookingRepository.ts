@@ -1,54 +1,66 @@
+import { db, bookings, bookingItems } from '@infrastructure/database';
 import { IBookingRepository } from '@domain/repositories/IBookingRepository';
 import { Booking } from '@domain/entities/Booking';
-import { db, bookings } from '@infrastructure/database';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 
 export class BookingRepository implements IBookingRepository {
   async findById(id: string): Promise<Booking | null> {
-    const booking = await db.query.bookings.findFirst({
+    const result = await db.query.bookings.findFirst({
       where: eq(bookings.id, id),
       with: {
         items: true,
       },
     });
-
-    return booking || null;
+    return result || null;
   }
 
   async findByCustomerId(customerId: string): Promise<Booking[]> {
-    const bookingList = await db.query.bookings.findMany({
+    return await db.query.bookings.findMany({
       where: eq(bookings.customerId, customerId),
       with: {
         items: true,
       },
-      orderBy: (bookings, { desc }) => [desc(bookings.createdAt)],
+      orderBy: desc(bookings.createdAt),
     });
-
-    return bookingList;
   }
 
   async findByShopId(shopId: string): Promise<Booking[]> {
-    const bookingList = await db.query.bookings.findMany({
+    return await db.query.bookings.findMany({
       where: eq(bookings.shopId, shopId),
       with: {
         items: true,
       },
-      orderBy: (bookings, { desc }) => [desc(bookings.createdAt)],
+      orderBy: desc(bookings.createdAt),
     });
-
-    return bookingList;
   }
 
   async create(data: Omit<Booking, 'id' | 'createdAt' | 'updatedAt'>): Promise<Booking> {
+    const { items, ...bookingData } = data as any;
+
     const [booking] = await db
       .insert(bookings)
       .values({
-        ...data,
-        status: data.status || 'PENDING_VENDOR_REVIEW',
+        ...bookingData,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       })
       .returning();
 
-    return booking;
+    if (items && items.length > 0) {
+      const itemsData = items.map((item: any) => ({
+        bookingId: booking.id,
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalPrice,
+        days: item.days,
+        createdAt: new Date(),
+      }));
+
+      await db.insert(bookingItems).values(itemsData);
+    }
+
+    return await this.findById(booking.id) as Booking;
   }
 
   async update(id: string, data: Partial<Booking>): Promise<Booking> {
@@ -60,15 +72,11 @@ export class BookingRepository implements IBookingRepository {
       })
       .where(eq(bookings.id, id))
       .returning();
-
-    if (!booking) {
-      throw new Error('Booking not found');
-    }
-
-    return booking;
+    return await this.findById(booking.id) as Booking;
   }
 
   async delete(id: string): Promise<void> {
+    await db.delete(bookingItems).where(eq(bookingItems.bookingId, id));
     await db.delete(bookings).where(eq(bookings.id, id));
   }
 
@@ -91,16 +99,14 @@ export class BookingRepository implements IBookingRepository {
       conditions.push(eq(bookings.shopId, filters.shopId));
     }
 
-    const bookingList = await db.query.bookings.findMany({
+    return await db.query.bookings.findMany({
       where: conditions.length > 0 ? and(...conditions) : undefined,
+      limit: filters?.limit || 50,
+      offset: filters?.offset || 0,
+      orderBy: desc(bookings.createdAt),
       with: {
         items: true,
       },
-      limit: filters?.limit || 20,
-      offset: filters?.offset || 0,
-      orderBy: (bookings, { desc }) => [desc(bookings.createdAt)],
     });
-
-    return bookingList;
   }
 }
