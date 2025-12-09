@@ -1,58 +1,61 @@
 import Stripe from 'stripe';
 
-interface CreateCheckoutSessionInput {
+if (!process.env.STRIPE_SECRET_KEY) {
+  throw new Error('STRIPE_SECRET_KEY is not set');
+}
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: '2024-12-18.acacia',
+});
+
+export interface CreateCheckoutSessionDTO {
   bookingId: string;
   amount: number;
+  vendorStripeAccountId: string;
   platformFee: number;
-  stripeAccountId: string;
 }
 
 export class StripeService {
-  private stripe: Stripe;
-
-  constructor() {
-    const secretKey = process.env.STRIPE_SECRET_KEY;
-    if (!secretKey) {
-      throw new Error('STRIPE_SECRET_KEY is not set');
-    }
-    this.stripe = new Stripe(secretKey, { apiVersion: '2024-11-20.acacia' });
-  }
-
-  async createCheckoutSession(input: CreateCheckoutSessionInput): Promise<Stripe.Checkout.Session> {
-    const session = await this.stripe.checkout.sessions.create({
+  /**
+   * Create a Stripe Checkout Session for booking payment
+   */
+  async createCheckoutSession(dto: CreateCheckoutSessionDTO): Promise<Stripe.Checkout.Session> {
+    const session = await stripe.checkout.sessions.create({
       mode: 'payment',
-      payment_method_types: ['card'],
       line_items: [
         {
           price_data: {
             currency: 'brl',
             product_data: {
-              name: 'Reserva de Locação',
-              description: `Booking ID: ${input.bookingId}`,
+              name: 'Reserva de Evento',
+              description: `Booking ID: ${dto.bookingId}`,
             },
-            unit_amount: Math.round(input.amount * 100),
+            unit_amount: Math.round(dto.amount * 100), // Convert to cents
           },
           quantity: 1,
         },
       ],
       payment_intent_data: {
-        application_fee_amount: Math.round(input.platformFee * 100),
+        application_fee_amount: Math.round(dto.platformFee * 100),
         transfer_data: {
-          destination: input.stripeAccountId,
+          destination: dto.vendorStripeAccountId,
         },
       },
       metadata: {
-        bookingId: input.bookingId,
+        bookingId: dto.bookingId,
       },
-      success_url: `${process.env.FRONTEND_URL}/bookings/${input.bookingId}/success`,
-      cancel_url: `${process.env.FRONTEND_URL}/bookings/${input.bookingId}/cancelled`,
+      success_url: `${process.env.FRONTEND_URL}/bookings/${dto.bookingId}/success`,
+      cancel_url: `${process.env.FRONTEND_URL}/bookings/${dto.bookingId}/cancelled`,
     });
 
     return session;
   }
 
-  async createConnectAccount(email: string): Promise<string> {
-    const account = await this.stripe.accounts.create({
+  /**
+   * Create a Stripe Connect account for a vendor
+   */
+  async createConnectAccount(email: string): Promise<Stripe.Account> {
+    const account = await stripe.accounts.create({
       type: 'express',
       email,
       capabilities: {
@@ -61,32 +64,45 @@ export class StripeService {
       },
     });
 
-    return account.id;
+    return account;
   }
 
-  async createAccountLink(accountId: string, shopId: string): Promise<string> {
-    const accountLink = await this.stripe.accountLinks.create({
+  /**
+   * Create an account link for Stripe Connect onboarding
+   */
+  async createAccountLink(accountId: string, refreshUrl: string, returnUrl: string): Promise<string> {
+    const accountLink = await stripe.accountLinks.create({
       account: accountId,
-      refresh_url: `${process.env.FRONTEND_URL}/shops/${shopId}/stripe/refresh`,
-      return_url: `${process.env.FRONTEND_URL}/shops/${shopId}/stripe/return`,
+      refresh_url: refreshUrl,
+      return_url: returnUrl,
       type: 'account_onboarding',
     });
 
     return accountLink.url;
   }
 
-  async refundPayment(paymentIntentId: string): Promise<Stripe.Refund> {
-    return await this.stripe.refunds.create({
-      payment_intent: paymentIntentId,
-    });
-  }
-
-  async constructWebhookEvent(payload: string, signature: string): Promise<Stripe.Event> {
+  /**
+   * Verify webhook signature
+   */
+  verifyWebhookSignature(payload: string, signature: string): Stripe.Event {
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    
     if (!webhookSecret) {
       throw new Error('STRIPE_WEBHOOK_SECRET is not set');
     }
 
-    return this.stripe.webhooks.constructEvent(payload, signature, webhookSecret);
+    return stripe.webhooks.constructEvent(payload, signature, webhookSecret);
+  }
+
+  /**
+   * Handle successful payment
+   */
+  async handlePaymentSuccess(sessionId: string): Promise<{ bookingId: string; paymentIntentId: string }> {
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    
+    return {
+      bookingId: session.metadata?.bookingId || '',
+      paymentIntentId: session.payment_intent as string,
+    };
   }
 }
